@@ -17,7 +17,7 @@ from torchvision.utils  import make_grid
 from models import UNet, VAE, ClassEmbedder
 from schedulers import DDPMScheduler, DDIMScheduler
 from pipelines import DDPMPipeline
-from utils import seed_everything, init_distributed_device, is_primary, AverageMeter, str2bool, save_checkpoint
+from utils import seed_everything, init_distributed_device, is_primary, AverageMeter, str2bool, save_checkpoint, EMA
 
 
 logger = get_logger(__name__)
@@ -75,6 +75,13 @@ def parse_args():
     
     # ddim sampler for inference
     parser.add_argument("--use_ddim", type=str2bool, default=False, help="use ddim sampler for inference")
+
+    # EMA (exponential moving average of weights)
+    parser.add_argument("--use_ema", type=str2bool, default=True, help="use EMA of UNet weights for inference")
+    parser.add_argument("--ema_decay", type=float, default=0.9999, help="EMA decay rate")
+
+    # resume from checkpoint
+    parser.add_argument("--resume", type=str, default=None, help="path to checkpoint to resume training from")
     
     # checkpoint path for inference
     parser.add_argument("--ckpt", type=str, default=None, help="checkpoint path for inference")
@@ -220,6 +227,35 @@ def main():
     optimizer = torch.optim.AdamW(params, lr=args.learning_rate, weight_decay=args.weight_decay)
     # TODO: setup scheduler
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.num_epochs)
+
+    # Setup EMA — maintains a slow-moving average of UNet weights for inference
+    ema = None
+    if getattr(args, 'use_ema', True):
+        ema_decay = getattr(args, 'ema_decay', 0.9999)
+        ema = EMA(unet, decay=ema_decay)
+        ema.ema_model = ema.ema_model.to(device)
+
+    # Resume from checkpoint if requested
+    start_epoch = 0
+    if getattr(args, 'resume', None):
+        logger.info(f"Resuming from checkpoint: {args.resume}")
+        ckpt = torch.load(args.resume, map_location=device, weights_only=False)
+        unet.load_state_dict(ckpt['unet_state_dict'])
+        if 'optimizer_state_dict' in ckpt:
+            optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+        if 'epoch' in ckpt:
+            start_epoch = ckpt['epoch'] + 1
+        # Load EMA if available
+        if ema is not None:
+            ema_path = args.resume.replace('checkpoint_epoch_', 'ema_epoch_')
+            if os.path.exists(ema_path):
+                ema_ckpt = torch.load(ema_path, map_location=device, weights_only=False)
+                ema.load_state_dict(ema_ckpt['ema_state_dict'])
+                logger.info(f"Loaded EMA from {ema_path}")
+        # Fast-forward LR scheduler
+        for _ in range(start_epoch):
+            lr_scheduler.step()
+        logger.info(f"Resumed at epoch {start_epoch}")
     
     # max train steps
     num_update_steps_per_epoch = len(train_loader)
@@ -289,7 +325,7 @@ def main():
     progress_bar = tqdm(range(args.max_train_steps), disable=not is_primary(args))
 
     # training
-    for epoch in range(args.num_epochs):
+    for epoch in range(start_epoch, args.num_epochs):
         
         # set epoch for distributed sampler, this is for distribution training
         if hasattr(train_loader.sampler, 'set_epoch'):
@@ -365,7 +401,11 @@ def main():
 
             # TODO: step your optimizer
             optimizer.step()
-            
+
+            # Update EMA weights after each optimizer step
+            if ema is not None:
+                ema.update(unet_wo_ddp)
+
             progress_bar.update(1)
             
             # logger
@@ -377,8 +417,10 @@ def main():
         lr_scheduler.step()
 
         # validation
-        # send unet to evaluation mode
-        unet.eval()        
+        # send unet to evaluation mode; swap in EMA weights for sampling if enabled
+        unet.eval()
+        if ema is not None:
+            pipeline.unet = ema.ema_model        
         generator = torch.Generator(device=device)
         generator.manual_seed(epoch + args.seed)
         
@@ -415,10 +457,17 @@ def main():
         # Send to wandb
         if is_primary(args):
             wandb_logger.log({'gen_images': wandb.Image(grid_image)})
-            
-        # save checkpoint
+
+        # restore the raw UNet reference on the pipeline for next epoch's EMA swap
+        if ema is not None:
+            pipeline.unet = unet_wo_ddp
+
+        # save checkpoint (including EMA weights if enabled)
         if is_primary(args):
             save_checkpoint(unet_wo_ddp, scheduler_wo_ddp, vae_wo_ddp, class_embedder, optimizer, epoch, save_dir=save_dir)
+            if ema is not None:
+                ema_path = os.path.join(save_dir, f'ema_epoch_{epoch}.pth')
+                torch.save({'ema_state_dict': ema.state_dict(), 'epoch': epoch}, ema_path)
 
 
 if __name__ == '__main__':

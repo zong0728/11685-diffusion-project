@@ -24,7 +24,8 @@ echo "Running on $(hostname)"
 echo "Resuming from: $CKPT_PATH"
 nvidia-smi || true
 
-module purge
+# Don't purge — keep the default Cray PrgEnv-gnu that provides compilers
+# required by craype-accel-nvidia90 (a dependency of miniforge3_pytorch).
 module load python/miniforge3_pytorch/2.10.0
 
 export PYTHONUSERBASE=$HOME/.local

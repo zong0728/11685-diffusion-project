@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=ddpm_resume
-#SBATCH --account=cis260706
+#SBATCH --account=bgyq-dtai-gh
 #SBATCH --partition=ghx4
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=1
@@ -14,24 +14,33 @@ set -euo pipefail
 
 # Resume training from the last checkpoint.
 # Usage: sbatch scripts/resume_deltaai.sh <ckpt_path>
-# Example: sbatch scripts/resume_deltaai.sh experiments/exp-0-latent_cfg_v1/checkpoints/checkpoint_epoch_99.pth
+# Example:
+#   sbatch scripts/resume_deltaai.sh experiments/exp-0-latent_cfg_v1/checkpoints/checkpoint_epoch_99.pth
 
 CKPT_PATH="${1:?Please provide checkpoint path as first argument}"
 
 echo "Job starting at $(date)"
+echo "Running on $(hostname)"
 echo "Resuming from: $CKPT_PATH"
 nvidia-smi || true
 
 module purge
-module load cuda/12.4 || true
-module load anaconda3 || true
-source activate diffusion || conda activate diffusion
+module load python/miniforge3_pytorch/2.10.0
 
-cd $PROJECT_DIR/11685-diffusion-project
+export PYTHONUSERBASE=$HOME/.local
+export PYTHONPATH=$HOME/.local/lib/python3.12/site-packages:${PYTHONPATH:-}
+
+PROJECT_DIR=/projects/bgyq/sguan/11685-diffusion-project
+DATA_DIR=/work/nvme/bgyq/sguan/imagenet100_128x128
+
+cd "$PROJECT_DIR"
+mkdir -p logs experiments
+
+export WANDB_MODE=offline
 
 python train.py \
     --config configs/ddpm.yaml \
-    --data_dir "$DATA_DIR/imagenet100_128x128/train" \
+    --data_dir "$DATA_DIR/train" \
     --run_name latent_cfg_v1 \
     --image_size 128 \
     --unet_in_size 32 \

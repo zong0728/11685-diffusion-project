@@ -1,71 +1,57 @@
 #!/bin/bash
-#SBATCH --job-name=ddpm_train
+#SBATCH --job-name=ddpm_smoke
 #SBATCH --account=bgyq-dtai-gh
 #SBATCH --partition=ghx4
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=1
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=128G
-#SBATCH --time=48:00:00
-#SBATCH --output=logs/train_%j.out
-#SBATCH --error=logs/train_%j.err
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=00:30:00
+#SBATCH --output=logs/smoke_%j.out
+#SBATCH --error=logs/smoke_%j.err
 
 set -euo pipefail
 
 # =========================================================
-# NCSA DeltaAI — Latent DDPM training job
-# Project CIS260706, account bgyq-dtai-gh
-# GPU: NVIDIA GH200 (Grace-Hopper, 120 GB HBM3e) on partition ghx4
+# Smoke test: 2 epochs of latent DDPM on DeltaAI
+# Purpose: verify GPU, data loading, VAE, EMA, cosine schedule all work
+# Cost: ~10-20 min on one GH200 → spends ~0.5 GPU-hours
 # =========================================================
 
 echo "Job starting at $(date)"
 echo "Running on $(hostname)"
 nvidia-smi || true
 
-# ---------- Environment ----------
 module purge
 module load python/miniforge3_pytorch/2.10.0
 
-# pip install --user packages (torchmetrics, torch-fidelity, einops, etc.)
-# are under ~/.local — force Python to include that path.
 export PYTHONUSERBASE=$HOME/.local
 export PYTHONPATH=$HOME/.local/lib/python3.12/site-packages:${PYTHONPATH:-}
 
-# ---------- Paths ----------
 PROJECT_DIR=/projects/bgyq/sguan/11685-diffusion-project
 DATA_DIR=/work/nvme/bgyq/sguan/imagenet100_128x128
 
 cd "$PROJECT_DIR"
 mkdir -p logs experiments
 
-echo "Project dir: $PROJECT_DIR"
-echo "Data dir:    $DATA_DIR"
-echo "GPU summary:"
-python -c "import torch; print(f'  PyTorch {torch.__version__}'); print(f'  CUDA available: {torch.cuda.is_available()}'); print(f'  Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"CPU\"}')"
-
-# ---------- Training ----------
-# Latent DDPM + CFG + big UNet + cosine schedule + EMA
-# Offline wandb to avoid login / network issues on compute nodes
 export WANDB_MODE=offline
 
 python train.py \
     --config configs/ddpm.yaml \
     --data_dir "$DATA_DIR/train" \
-    --run_name latent_cfg_v1 \
+    --run_name smoke_test \
     --image_size 128 \
     --unet_in_size 32 \
     --unet_in_ch 3 \
-    --unet_ch 192 \
+    --unet_ch 128 \
     --unet_ch_mult 1 2 2 4 \
     --unet_attn 2 3 \
     --unet_num_res_blocks 2 \
-    --unet_dropout 0.0 \
-    --num_epochs 500 \
+    --num_epochs 2 \
     --batch_size 64 \
     --num_workers 8 \
     --num_classes 100 \
     --learning_rate 1e-4 \
-    --weight_decay 1e-4 \
     --num_train_timesteps 1000 \
     --num_inference_steps 50 \
     --beta_schedule cosine \
@@ -76,4 +62,5 @@ python train.py \
     --use_ema True \
     --ema_decay 0.9999
 
-echo "Job finished at $(date)"
+echo "Smoke test finished at $(date)"
+echo "If you see this message without errors, the full pipeline works end-to-end on a GPU."

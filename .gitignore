@@ -47,3 +47,7 @@ Thumbs.db
 !figures/*.png
 !figures/*.jpg
 submission.csv
+
+# Private notes — keep local only
+notes/
+*.notes.md

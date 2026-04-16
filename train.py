@@ -80,6 +80,12 @@ def parse_args():
     parser.add_argument("--use_ema", type=str2bool, default=True, help="use EMA of UNet weights for inference")
     parser.add_argument("--ema_decay", type=float, default=0.9999, help="EMA decay rate")
 
+    # Loss weighting
+    parser.add_argument("--min_snr_gamma", type=float, default=0.0, help="Min-SNR loss weighting gamma (5.0 is a common good value). 0 disables.")
+
+    # torch.compile
+    parser.add_argument("--compile_model", type=str2bool, default=False, help="Use torch.compile on the UNet (10-30%% faster on H100/H200).")
+
     # resume from checkpoint
     parser.add_argument("--resume", type=str, default=None, help="path to checkpoint to resume training from")
     
@@ -235,6 +241,32 @@ def main():
         ema = EMA(unet, decay=ema_decay)
         ema.ema_model = ema.ema_model.to(device)
 
+    # Setup mixed precision autocast (bf16 is ideal for H100/H200)
+    amp_dtype = None
+    if args.mixed_precision == 'bf16':
+        amp_dtype = torch.bfloat16
+    elif args.mixed_precision == 'fp16':
+        amp_dtype = torch.float16
+    use_amp = amp_dtype is not None
+    # bf16 has the same dynamic range as fp32, so no GradScaler is needed.
+    # fp16 would need a GradScaler; we don't use fp16 on H200 anyway.
+
+    if use_amp and is_primary(args):
+        logger.info(f"Mixed precision enabled: {args.mixed_precision}")
+
+    # Optional torch.compile (PyTorch 2.x graph capture for ~10-30% speedup on transformer-like models)
+    if getattr(args, 'compile_model', False):
+        if is_primary(args):
+            logger.info("Compiling UNet with torch.compile(mode='max-autotune')...")
+        unet = torch.compile(unet, mode='max-autotune', fullgraph=False)
+        unet_wo_ddp = unet  # compiled module, still usable for sampling
+
+    # Min-SNR loss weighting (Hang et al. 2023, "Efficient Diffusion Training via Min-SNR Weighting Strategy")
+    # Gives higher weight to intermediate timesteps; yields ~3x faster convergence in practice.
+    min_snr_gamma = getattr(args, 'min_snr_gamma', 0.0)
+    if min_snr_gamma > 0 and is_primary(args):
+        logger.info(f"Min-SNR loss weighting enabled with gamma={min_snr_gamma}")
+
     # Resume from checkpoint if requested
     start_epoch = 0
     if getattr(args, 'resume', None):
@@ -381,14 +413,26 @@ def main():
             # TODO: add noise to images using scheduler
             noisy_images = scheduler.add_noise(images, noise, timesteps)
 
-            # TODO: model prediction
-            model_pred = unet(noisy_images, timesteps, class_emb)
+            # Forward pass (bf16 autocast on H100/H200 gives ~2-3x speedup)
+            with torch.amp.autocast('cuda', dtype=amp_dtype, enabled=use_amp):
+                # TODO: model prediction
+                model_pred = unet(noisy_images, timesteps, class_emb)
 
-            if args.prediction_type == 'epsilon':
-                target = noise
+                if args.prediction_type == 'epsilon':
+                    target = noise
 
-            # TODO: calculate loss
-            loss = F.mse_loss(model_pred, target)
+                # Per-sample MSE (keep it elementwise so we can apply min-SNR weighting below)
+                if min_snr_gamma > 0:
+                    loss_per_sample = ((model_pred.float() - target.float()) ** 2).mean(dim=list(range(1, model_pred.ndim)))
+                    # SNR(t) = alpha_cumprod(t) / (1 - alpha_cumprod(t))
+                    alpha_cumprod_t = scheduler.alphas_cumprod[timesteps].to(loss_per_sample.dtype)
+                    snr = alpha_cumprod_t / (1.0 - alpha_cumprod_t)
+                    # Min-SNR: w(t) = min(SNR(t), gamma) / SNR(t), capped to [0, gamma/SNR]
+                    weight = torch.clamp(snr, max=min_snr_gamma) / snr
+                    loss = (weight * loss_per_sample).mean()
+                else:
+                    # TODO: calculate loss
+                    loss = F.mse_loss(model_pred, target)
 
             # record loss
             loss_m.update(loss.item())

@@ -251,6 +251,12 @@ class DDPMScheduler(nn.Module):
         # "predicted x_0" of formula (15) from https://arxiv.org/pdf/2006.11239.pdf
         if self.prediction_type == 'epsilon':
             pred_original_sample = (sample - beta_prod_t ** 0.5 * model_output) / alpha_prod_t ** 0.5
+        elif self.prediction_type == 'v_prediction':
+            # v = alpha * epsilon - sigma * x0  =>  x0 = alpha * x_t - sigma * v
+            # where alpha = sqrt(alpha_prod_t), sigma = sqrt(1 - alpha_prod_t)
+            pred_original_sample = (alpha_prod_t ** 0.5) * sample - (beta_prod_t ** 0.5) * model_output
+        elif self.prediction_type == 'sample':
+            pred_original_sample = model_output
         else:
             raise NotImplementedError(f"Prediction type {self.prediction_type} not implemented.")
 

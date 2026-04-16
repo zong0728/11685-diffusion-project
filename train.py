@@ -420,6 +420,14 @@ def main():
 
                 if args.prediction_type == 'epsilon':
                     target = noise
+                elif args.prediction_type == 'v_prediction':
+                    # v = sqrt(alpha_bar) * eps - sqrt(1 - alpha_bar) * x0
+                    alpha_bar = scheduler.alphas_cumprod[timesteps].to(noise.dtype)
+                    while len(alpha_bar.shape) < len(noise.shape):
+                        alpha_bar = alpha_bar.unsqueeze(-1)
+                    target = (alpha_bar ** 0.5) * noise - ((1 - alpha_bar) ** 0.5) * images
+                else:
+                    raise NotImplementedError(f"Unknown prediction_type: {args.prediction_type}")
 
                 # Per-sample MSE (keep it elementwise so we can apply min-SNR weighting below)
                 if min_snr_gamma > 0:

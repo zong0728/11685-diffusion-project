@@ -95,6 +95,11 @@ class DDIMScheduler(DDPMScheduler):
         if self.prediction_type == 'epsilon':
             pred_original_sample = (sample - beta_prod_t ** 0.5 * model_output) / alpha_prod_t ** 0.5
             pred_epsilon = model_output
+        elif self.prediction_type == 'v_prediction':
+            # v-parameterization (Salimans & Ho 2022, "Progressive Distillation")
+            # x0 = alpha * x_t - sigma * v;   eps = sigma * x_t + alpha * v
+            pred_original_sample = (alpha_prod_t ** 0.5) * sample - (beta_prod_t ** 0.5) * model_output
+            pred_epsilon = (beta_prod_t ** 0.5) * sample + (alpha_prod_t ** 0.5) * model_output
         else:
             raise NotImplementedError(f"Prediction type {self.prediction_type} not implemented.")
 

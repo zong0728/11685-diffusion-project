@@ -421,25 +421,18 @@ def main():
                 if args.prediction_type == 'epsilon':
                     target = noise
                 elif args.prediction_type == 'v_prediction':
-                    # v = sqrt(alpha_bar) * eps - sqrt(1 - alpha_bar) * x0
-                    alpha_bar = scheduler.alphas_cumprod[timesteps].to(noise.dtype)
-                    while len(alpha_bar.shape) < len(noise.shape):
-                        alpha_bar = alpha_bar.unsqueeze(-1)
-                    target = (alpha_bar ** 0.5) * noise - ((1 - alpha_bar) ** 0.5) * images
+                    target = scheduler.get_velocity(images, noise, timesteps)
                 else:
                     raise NotImplementedError(f"Unknown prediction_type: {args.prediction_type}")
 
-                # Per-sample MSE (keep it elementwise so we can apply min-SNR weighting below)
                 if min_snr_gamma > 0:
                     loss_per_sample = ((model_pred.float() - target.float()) ** 2).mean(dim=list(range(1, model_pred.ndim)))
-                    # SNR(t) = alpha_cumprod(t) / (1 - alpha_cumprod(t))
                     alpha_cumprod_t = scheduler.alphas_cumprod[timesteps].to(loss_per_sample.dtype)
                     snr = alpha_cumprod_t / (1.0 - alpha_cumprod_t)
-                    # Min-SNR: w(t) = min(SNR(t), gamma) / SNR(t), capped to [0, gamma/SNR]
+                    # Min-SNR-gamma (Hang et al. 2023): clamp SNR weight to gamma for low-t stability
                     weight = torch.clamp(snr, max=min_snr_gamma) / snr
                     loss = (weight * loss_per_sample).mean()
                 else:
-                    # TODO: calculate loss
                     loss = F.mse_loss(model_pred, target)
 
             # record loss

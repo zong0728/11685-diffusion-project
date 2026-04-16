@@ -207,8 +207,30 @@ class DDPMScheduler(nn.Module):
         # TODO: add noise to the original samples using the formula (14) from https://arxiv.org/pdf/2006.11239.pdf
         noisy_samples = sqrt_alpha_prod * original_samples + sqrt_one_minus_alpha_prod * noise
         return noisy_samples
-    
-    
+
+    def get_velocity(
+        self,
+        original_samples: torch.Tensor,
+        noise: torch.Tensor,
+        timesteps: torch.IntTensor,
+    ) -> torch.Tensor:
+        # v = sqrt(alpha_bar) * eps - sqrt(1 - alpha_bar) * x0  (Salimans & Ho 2022)
+        alphas_cumprod = self.alphas_cumprod.to(dtype=original_samples.dtype)
+        timesteps = timesteps.to(original_samples.device)
+
+        sqrt_alpha_prod = alphas_cumprod[timesteps] ** 0.5
+        sqrt_alpha_prod = sqrt_alpha_prod.flatten()
+        while len(sqrt_alpha_prod.shape) < len(original_samples.shape):
+            sqrt_alpha_prod = sqrt_alpha_prod.unsqueeze(-1)
+
+        sqrt_one_minus_alpha_prod = (1 - alphas_cumprod[timesteps]) ** 0.5
+        sqrt_one_minus_alpha_prod = sqrt_one_minus_alpha_prod.flatten()
+        while len(sqrt_one_minus_alpha_prod.shape) < len(original_samples.shape):
+            sqrt_one_minus_alpha_prod = sqrt_one_minus_alpha_prod.unsqueeze(-1)
+
+        return sqrt_alpha_prod * noise - sqrt_one_minus_alpha_prod * original_samples
+
+
     def step(
         self,
         model_output: torch.Tensor,
@@ -252,8 +274,6 @@ class DDPMScheduler(nn.Module):
         if self.prediction_type == 'epsilon':
             pred_original_sample = (sample - beta_prod_t ** 0.5 * model_output) / alpha_prod_t ** 0.5
         elif self.prediction_type == 'v_prediction':
-            # v = alpha * epsilon - sigma * x0  =>  x0 = alpha * x_t - sigma * v
-            # where alpha = sqrt(alpha_prod_t), sigma = sqrt(1 - alpha_prod_t)
             pred_original_sample = (alpha_prod_t ** 0.5) * sample - (beta_prod_t ** 0.5) * model_output
         elif self.prediction_type == 'sample':
             pred_original_sample = model_output

@@ -11,5 +11,5 @@
 #SBATCH --error=logs/D_nominsnr_%j.err
 
 # Run D: disable min-SNR weighting (gamma=0 → uniform loss).
-source "$(dirname "$0")/_common.sh"
+source /projects/bgyq/sguan/11685-diffusion-project/scripts/overnight/_common.sh
 run_train --run_name D_no_minsnr --min_snr_gamma 0.0

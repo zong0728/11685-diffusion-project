@@ -11,5 +11,5 @@
 #SBATCH --error=logs/A_baseline_%j.err
 
 # Run A: reference config that B–E compare against.
-source "$(dirname "$0")/_common.sh"
+source /projects/bgyq/sguan/11685-diffusion-project/scripts/overnight/_common.sh
 run_train --run_name A_baseline

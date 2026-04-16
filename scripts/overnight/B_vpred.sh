@@ -11,5 +11,5 @@
 #SBATCH --error=logs/B_vpred_%j.err
 
 # Run B: v-prediction target (vs A's epsilon).
-source "$(dirname "$0")/_common.sh"
+source /projects/bgyq/sguan/11685-diffusion-project/scripts/overnight/_common.sh
 run_train --run_name B_vpred --prediction_type v_prediction

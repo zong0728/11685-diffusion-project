@@ -11,5 +11,5 @@
 #SBATCH --error=logs/C_bigmodel_%j.err
 
 # Run C: bigger UNet (ch=320, ~280M params). batch=384 to fit in 98GB.
-source "$(dirname "$0")/_common.sh"
+source /projects/bgyq/sguan/11685-diffusion-project/scripts/overnight/_common.sh
 run_train --run_name C_bigmodel --unet_ch 320 --batch_size 384 --num_epochs 110

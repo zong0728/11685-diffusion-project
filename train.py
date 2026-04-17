@@ -40,6 +40,7 @@ def parse_args():
     parser.add_argument("--run_name", type=str, default=None, help="run_name")
     parser.add_argument("--output_dir", type=str, default="experiments", help="output folder")
     parser.add_argument("--num_epochs", type=int, default=10)
+    parser.add_argument("--save_every", type=int, default=1, help="save checkpoint every N epochs (last epoch always saved)")
     parser.add_argument("--learning_rate", type=float, default=1e-4, help="learning rate")
     parser.add_argument("--weight_decay", type=float, default=1e-4, help="weight decay")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="gradient clip")
@@ -507,12 +508,15 @@ def main():
         if ema is not None:
             pipeline.unet = unet_wo_ddp
 
-        # save checkpoint (including EMA weights if enabled)
+        # save checkpoint (including EMA weights if enabled). Gated by --save_every
+        # to avoid filling disk on long runs; the final epoch is always saved.
         if is_primary(args):
-            save_checkpoint(unet_wo_ddp, scheduler_wo_ddp, vae_wo_ddp, class_embedder, optimizer, epoch, save_dir=save_dir)
-            if ema is not None:
-                ema_path = os.path.join(save_dir, f'ema_epoch_{epoch}.pth')
-                torch.save({'ema_state_dict': ema.state_dict(), 'epoch': epoch}, ema_path)
+            is_last = (epoch == args.num_epochs - 1)
+            if is_last or ((epoch + 1) % args.save_every == 0):
+                save_checkpoint(unet_wo_ddp, scheduler_wo_ddp, vae_wo_ddp, class_embedder, optimizer, epoch, save_dir=save_dir)
+                if ema is not None:
+                    ema_path = os.path.join(save_dir, f'ema_epoch_{epoch}.pth')
+                    torch.save({'ema_state_dict': ema.state_dict(), 'epoch': epoch}, ema_path)
 
 
 if __name__ == '__main__':

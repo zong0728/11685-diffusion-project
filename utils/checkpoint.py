@@ -5,7 +5,14 @@ def load_checkpoint(unet, scheduler, vae=None, class_embedder=None, optimizer=No
     
     print("loading checkpoint")
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    
+
+    # EMA-only checkpoints (ema_epoch_*.pth) carry just {'ema_state_dict', 'epoch'}.
+    # Treat the EMA weights as the unet weights for inference — that's the whole point of EMA.
+    if 'ema_state_dict' in checkpoint and 'unet_state_dict' not in checkpoint:
+        print("loading unet from EMA weights")
+        unet.load_state_dict(checkpoint['ema_state_dict'])
+        return
+
     print("loading unet")
     unet.load_state_dict(checkpoint['unet_state_dict'])
     print("loading scheduler")

@@ -85,6 +85,9 @@ class DDIMScheduler(DDPMScheduler):
         t = timestep
         prev_t = self.previous_timestep(t)
 
+        # Discard learned-variance coefficients — DDIM is deterministic (or has its own sigma via eta).
+        model_output, _ = self._split_model_output(model_output, sample.shape[1])
+
         # TODO: 1. compute alphas, betas
         alpha_prod_t = self.alphas_cumprod[t]
         alpha_prod_t_prev = self.alphas_cumprod[prev_t] if prev_t >= 0 else torch.tensor(1.0)

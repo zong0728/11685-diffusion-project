@@ -110,7 +110,18 @@ class DDPMPipeline:
             if guidance_scale is not None and guidance_scale != 1.0:
                 # TODO: implement cfg
                 uncond_model_output, cond_model_output = model_output.chunk(2)
-                model_output = uncond_model_output + guidance_scale * (cond_model_output - uncond_model_output)
+                # Under learned_range variance the UNet emits 2*C channels. CFG is only applied to
+                # the mean-prediction half; variance coefficients are passed through from the
+                # conditional branch unchanged (Improved DDPM, appendix B).
+                C = cond_model_output.shape[1]
+                if C == 2 * image.shape[1]:
+                    half = image.shape[1]
+                    uncond_eps, _ = uncond_model_output.split(half, dim=1)
+                    cond_eps, cond_var = cond_model_output.split(half, dim=1)
+                    eps = uncond_eps + guidance_scale * (cond_eps - uncond_eps)
+                    model_output = torch.cat([eps, cond_var], dim=1)
+                else:
+                    model_output = uncond_model_output + guidance_scale * (cond_model_output - uncond_model_output)
 
             # TODO: 2. compute previous image: x_t -> x_t-1 using scheduler
             image = self.scheduler.step(model_output, t, image, generator=generator)

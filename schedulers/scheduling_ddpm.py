@@ -121,7 +121,79 @@ class DDPMScheduler(nn.Module):
         return prev_t
 
     
-    def _get_variance(self, t):
+    def vlb_terms(self, x_start, x_t, timesteps, eps_pred, var_coef):
+        """Per-sample VLB-style KL between q(x_{t-1} | x_t, x_0) and p_theta(x_{t-1} | x_t).
+
+        Used only when variance_type == 'learned_range'. Returns a tensor of shape (B,).
+        Both q and p_theta are diagonal Gaussians with the same dimensionality, so the
+        closed-form KL reduces to a per-pixel expression that we sum/mean over spatial dims.
+        The eps_pred is treated as stop-grad so this term only trains the variance head
+        (Improved DDPM, Nichol 2021).
+        """
+        alphas_cumprod = self.alphas_cumprod.to(dtype=x_start.dtype)
+        alpha_bar_t = alphas_cumprod[timesteps]
+        prev_t = timesteps - 1  # at t=0 this yields -1 → clamp to use alpha_bar_prev=1
+        alpha_bar_prev = torch.where(
+            prev_t >= 0,
+            alphas_cumprod[prev_t.clamp(min=0)],
+            torch.ones_like(alpha_bar_t),
+        )
+        beta_t = 1 - alpha_bar_t / alpha_bar_prev
+        # Broadcast scalars-per-sample to (B, 1, 1, 1).
+        def _b(x):
+            while len(x.shape) < len(x_start.shape):
+                x = x.unsqueeze(-1)
+            return x
+        alpha_bar_t, alpha_bar_prev, beta_t = map(_b, (alpha_bar_t, alpha_bar_prev, beta_t))
+
+        # Posterior q(x_{t-1}|x_t, x_0) — diagonal Gaussian, same formula as DDPM eq. (7).
+        posterior_mean = (
+            (alpha_bar_prev ** 0.5) * beta_t / (1 - alpha_bar_t) * x_start
+            + ((1 - alpha_bar_prev) * (1 - beta_t).clamp(min=1e-20) ** 0.5) / (1 - alpha_bar_t) * x_t
+        )
+        posterior_var = beta_t * (1 - alpha_bar_prev) / (1 - alpha_bar_t)
+        posterior_log_var = torch.log(posterior_var.clamp(min=1e-20))
+
+        # Model p_theta(x_{t-1}|x_t): mean derived from eps_pred (stop-grad), var from var_coef.
+        eps_pred = eps_pred.detach()
+        pred_x0 = (x_t - (1 - alpha_bar_t) ** 0.5 * eps_pred) / (alpha_bar_t ** 0.5)
+        if self.clip_sample:
+            pred_x0 = pred_x0.clamp(-self.clip_sample_range, self.clip_sample_range)
+        model_mean = (
+            (alpha_bar_prev ** 0.5) * beta_t / (1 - alpha_bar_t) * pred_x0
+            + ((1 - alpha_bar_prev) * (1 - beta_t).clamp(min=1e-20) ** 0.5) / (1 - alpha_bar_t) * x_t
+        )
+        # learned variance via interpolation between posterior_var (min) and beta_t (max).
+        min_log = posterior_log_var
+        max_log = torch.log(beta_t.clamp(min=1e-20))
+        frac = (var_coef + 1) / 2
+        model_log_var = frac * max_log + (1 - frac) * min_log
+
+        # KL(N(mu1, v1) || N(mu2, v2)) elementwise, then mean over non-batch dims.
+        kl = 0.5 * (
+            -1.0
+            + model_log_var - posterior_log_var
+            + torch.exp(posterior_log_var - model_log_var)
+            + ((posterior_mean - model_mean) ** 2) * torch.exp(-model_log_var)
+        )
+        # Natural-log KL → bits per dim not needed; just mean over pixels.
+        return kl.mean(dim=list(range(1, kl.ndim)))
+
+    def _split_model_output(self, model_output, channels):
+        """Split a model_output that may carry learned variance coefficients.
+
+        If variance_type == 'learned_range', the UNet emits 2*C channels: the first C are
+        the eps/v prediction consumed by the mean update, the last C are per-pixel
+        interpolation coefficients in (-1, 1) after a sigmoid that blend log(beta_t) and
+        log(beta_tilde_t) (Improved DDPM, Nichol 2021, eq. 15).
+        Returns (pred, var_coef) where var_coef is None when no learned variance is used.
+        """
+        if self.variance_type == 'learned_range' and model_output.shape[1] == 2 * channels:
+            pred, var_coef = torch.split(model_output, channels, dim=1)
+            return pred, var_coef
+        return model_output, None
+
+    def _get_variance(self, t, var_coef=None):
         """
         This is one of the most important functions in the DDPM. It calculates the variance $sigma_t$ for a given timestep.
         
@@ -159,6 +231,19 @@ class DDPMScheduler(nn.Module):
             # TODO: small hack: set the initial (log-)variance like so to get a better decoder log likelihood.
             if t == 1:
                 variance = variance
+        elif self.variance_type == "learned_range":
+            # Improved DDPM (Nichol & Dhariwal 2021, eq. 15): the model emits coefficients
+            # `var_coef` that interpolate between min_log=log(beta_tilde_t) and max_log=log(beta_t).
+            # frac = (var_coef + 1) / 2 maps sigmoid/tanh-like outputs into [0, 1].
+            min_log = torch.log(torch.clamp(variance, min=1e-20))
+            max_log = torch.log(torch.clamp(current_beta_t, min=1e-20))
+            if var_coef is None:
+                # Fallback when called without coefficients (e.g. DDIM sampling). Match fixed_small.
+                variance = variance
+            else:
+                frac = (var_coef + 1) / 2
+                log_variance = frac * max_log + (1 - frac) * min_log
+                variance = torch.exp(log_variance)
         else:
             raise NotImplementedError(f"Variance type {self.variance_type} not implemented.")
 
@@ -260,7 +345,11 @@ class DDPMScheduler(nn.Module):
         
         t = timestep
         prev_t = self.previous_timestep(t)
-        
+
+        # Strip learned-variance coefficients (if any) from the model output before
+        # the existing mean-prediction logic below.
+        model_output, var_coef = self._split_model_output(model_output, sample.shape[1])
+
         # TODO: 1. compute alphas, betas
         alpha_prod_t = self.alphas_cumprod[t]
         alpha_prod_t_prev = self.alphas_cumprod[prev_t] if prev_t >= 0 else torch.tensor(1.0)
@@ -303,8 +392,9 @@ class DDPMScheduler(nn.Module):
             variance_noise = randn_tensor(
                 model_output.shape, generator=generator, device=device, dtype=model_output.dtype
             )
-            # TODO: use self,get_variance and variance_noise
-            variance = (self._get_variance(t) ** 0.5) * variance_noise
+            # When var_coef is present (learned_range), _get_variance returns a per-pixel tensor
+            # with the same shape as `sample`; otherwise it returns a scalar. Both broadcast fine.
+            variance = (self._get_variance(t, var_coef=var_coef) ** 0.5) * variance_noise
 
         # TODO: add variance to prev_sample
         pred_prev_sample = pred_prev_sample + variance

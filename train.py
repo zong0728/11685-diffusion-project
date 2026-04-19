@@ -53,7 +53,8 @@ def parse_args():
     parser.add_argument("--beta_start", type=float, default=0.0002, help="ddpm beta start")
     parser.add_argument("--beta_end", type=float, default=0.02, help="ddpm beta end")
     parser.add_argument("--beta_schedule", type=str, default='linear', help="ddpm beta schedule")
-    parser.add_argument("--variance_type", type=str, default='fixed_small', help="ddpm variance type")
+    parser.add_argument("--variance_type", type=str, default='fixed_small', help="ddpm variance type (fixed_small / fixed_large / learned_range)")
+    parser.add_argument("--vlb_weight", type=float, default=0.001, help="weight on VLB loss term when variance_type=='learned_range' (Nichol 2021 uses 0.001)")
     parser.add_argument("--prediction_type", type=str, default='epsilon', help="ddpm epsilon type")
     parser.add_argument("--clip_sample", type=str2bool, default=True, help="whether to clip sample at each step of reverse process")
     parser.add_argument("--clip_sample_range", type=float, default=1.0, help="clip sample range")
@@ -186,8 +187,9 @@ def main():
     
     # setup model
     logger.info("Creating model")
-    # unet
-    unet = UNet(input_size=args.unet_in_size, input_ch=args.unet_in_ch, T=args.num_train_timesteps, ch=args.unet_ch, ch_mult=args.unet_ch_mult, attn=args.unet_attn, num_res_blocks=args.unet_num_res_blocks, dropout=args.unet_dropout, conditional=args.use_cfg, c_dim=args.unet_ch)
+    # unet — under learned_range variance the head emits 2*C channels (eps | var_coef).
+    unet_output_ch = 2 * args.unet_in_ch if args.variance_type == 'learned_range' else args.unet_in_ch
+    unet = UNet(input_size=args.unet_in_size, input_ch=args.unet_in_ch, T=args.num_train_timesteps, ch=args.unet_ch, ch_mult=args.unet_ch_mult, attn=args.unet_attn, num_res_blocks=args.unet_num_res_blocks, dropout=args.unet_dropout, conditional=args.use_cfg, c_dim=args.unet_ch, output_ch=unet_output_ch)
     # preint number of parameters
     num_params = sum(p.numel() for p in unet.parameters() if p.requires_grad)
     logger.info(f"Number of parameters: {num_params / 10 ** 6:.2f}M")
@@ -417,7 +419,13 @@ def main():
             # Forward pass (bf16 autocast on H100/H200 gives ~2-3x speedup)
             with torch.amp.autocast('cuda', dtype=amp_dtype, enabled=use_amp):
                 # TODO: model prediction
-                model_pred = unet(noisy_images, timesteps, class_emb)
+                raw_model_pred = unet(noisy_images, timesteps, class_emb)
+
+                # Split learned-variance coefficients off before computing L_simple.
+                if args.variance_type == 'learned_range':
+                    model_pred, var_coef = torch.split(raw_model_pred, args.unet_in_ch, dim=1)
+                else:
+                    model_pred, var_coef = raw_model_pred, None
 
                 if args.prediction_type == 'epsilon':
                     target = noise
@@ -435,6 +443,13 @@ def main():
                     loss = (weight * loss_per_sample).mean()
                 else:
                     loss = F.mse_loss(model_pred, target)
+
+                # Hybrid loss: L_simple + λ · L_vlb. VLB only trains the variance head (eps is detached
+                # inside scheduler.vlb_terms) — without this gate the VLB KL would overwhelm L_simple.
+                if var_coef is not None and args.vlb_weight > 0:
+                    vlb = scheduler.vlb_terms(images.float(), noisy_images.float(), timesteps,
+                                              eps_pred=model_pred.float(), var_coef=var_coef.float())
+                    loss = loss + args.vlb_weight * vlb.mean()
 
             # record loss
             loss_m.update(loss.item())

@@ -7,13 +7,16 @@ from .unet_modules import TimeEmbedding, DownSample, UpSample, ResBlock
 
 
 class UNet(nn.Module):
-    def __init__(self, input_size, input_ch, T, ch, ch_mult, attn, num_res_blocks, dropout=0.0, conditional=False, c_dim=None):
+    def __init__(self, input_size, input_ch, T, ch, ch_mult, attn, num_res_blocks, dropout=0.0, conditional=False, c_dim=None, output_ch=None):
         super().__init__()
         assert all([i < len(ch_mult) for i in attn]), 'attn index out of bound'
-        
-        self.input_size = input_size 
+
+        self.input_size = input_size
         self.input_ch = input_ch
-        self.T = T 
+        # output_ch defaults to input_ch (plain epsilon prediction). Set to 2*input_ch for
+        # Improved-DDPM-style learned variance (eps + interpolation coef v stacked on channel dim).
+        self.output_ch = output_ch if output_ch is not None else input_ch
+        self.T = T
         
         
         tdim = ch * 4
@@ -55,7 +58,7 @@ class UNet(nn.Module):
         self.head = nn.Sequential(
             nn.GroupNorm(32, now_ch),
             nn.SiLU(),
-            nn.Conv2d(now_ch, input_ch, 1, stride=1, padding=0)
+            nn.Conv2d(now_ch, self.output_ch, 1, stride=1, padding=0)
         )
         self.initialize()
 

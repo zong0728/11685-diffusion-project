@@ -85,7 +85,17 @@ def main():
         class_embedder = class_embedder.to(device)
 
     # scheduler
-    if args.use_ddim:
+    if getattr(args, 'use_dpmpp', False):
+        from schedulers.scheduling_dpmpp import DPMSolverPPWrapper
+        inference_scheduler = DPMSolverPPWrapper(
+            num_train_timesteps=args.num_train_timesteps,
+            num_inference_steps=args.num_inference_steps,
+            beta_schedule=args.beta_schedule,
+            prediction_type=args.prediction_type,
+            solver_order=args.dpmpp_solver_order,
+            use_karras_sigmas=args.dpmpp_karras,
+        ).to(device)
+    elif args.use_ddim:
         inference_scheduler = DDIMScheduler(
             num_train_timesteps=args.num_train_timesteps,
             num_inference_steps=args.num_inference_steps,

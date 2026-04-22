@@ -77,6 +77,9 @@ def parse_args():
     
     # ddim sampler for inference
     parser.add_argument("--use_ddim", type=str2bool, default=False, help="use ddim sampler for inference")
+    parser.add_argument("--use_dpmpp", type=str2bool, default=False, help="use DPM-Solver++ sampler (overrides use_ddim)")
+    parser.add_argument("--dpmpp_solver_order", type=int, default=2, help="DPM-Solver++ order (1/2/3)")
+    parser.add_argument("--dpmpp_karras", type=str2bool, default=True, help="use Karras sigmas for DPM-Solver++")
 
     # EMA (exponential moving average of weights)
     parser.add_argument("--use_ema", type=str2bool, default=True, help="use EMA of UNet weights for inference")

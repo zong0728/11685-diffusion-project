@@ -191,15 +191,20 @@ def main():
     is_mean, is_std = inception_score.compute()
     logger.info(f"Inception Score: {is_mean.item()} ± {is_std.item()}")
 
-    # optionally generate submission
+    # Generate Kaggle submission CSV tagged with the run name so concurrent eval jobs
+    # don't overwrite each other's output.
+    import traceback
     try:
         from generate_submission import generate_submission_from_tensors
-        # convert to [-1, 1] range for submission
-        submission_images = all_images * 2 - 1
-        generate_submission_from_tensors(submission_images, output_csv="submission.csv")
-        logger.info("Submission CSV saved to submission.csv")
+        submission_images = all_images * 2 - 1  # convert to [-1, 1]
+        tag = args.run_name if getattr(args, 'run_name', None) else "submission"
+        out_csv = f"submissions/{tag}.csv"
+        os.makedirs("submissions", exist_ok=True)
+        generate_submission_from_tensors(submission_images, output_csv=out_csv)
+        logger.info(f"Submission CSV saved to {out_csv}")
     except Exception as e:
-        logger.warning(f"Could not generate submission: {e}")
+        logger.error(f"Could not generate submission: {e}")
+        logger.error(traceback.format_exc())
 
 
 if __name__ == '__main__':

@@ -152,6 +152,9 @@ def extract_features_from_tensors(images, device='cuda', batch_size=64):
     all_features = []
     for i in tqdm(range(0, len(images), batch_size), desc="Inception features"):
         batch = images[i:i + batch_size].to(device)
+        # torchmetrics' FID Inception wrapper requires uint8 [0, 255] in current versions;
+        # the starter docstring claiming float [0, 1] is stale.
+        batch = (batch * 255).clamp(0, 255).to(torch.uint8)
         features = model(batch)  # (B, 2048)
         all_features.append(features.cpu())
 

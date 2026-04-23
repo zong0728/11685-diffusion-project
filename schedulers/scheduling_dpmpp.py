@@ -35,6 +35,9 @@ class DPMSolverPPWrapper(nn.Module):
             algorithm_type='dpmsolver++',
             solver_order=solver_order,
             use_karras_sigmas=use_karras_sigmas,
+            # 'zero' appends a 0 sigma so step N becomes the termination step (and consumes one
+            # extra timestep slot in our for-loop, causing IndexError). 'sigma_min' stops cleanly.
+            final_sigmas_type='sigma_min',
         )
         # Match our buffer API so anything that reads scheduler.alphas_cumprod keeps working.
         self.register_buffer('alphas_cumprod', self._scheduler.alphas_cumprod.clone())

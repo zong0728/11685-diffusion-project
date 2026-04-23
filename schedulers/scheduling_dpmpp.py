@@ -41,8 +41,10 @@ class DPMSolverPPWrapper(nn.Module):
         self.register_buffer('timesteps', self._scheduler.timesteps.clone())
 
     def set_timesteps(self, num_inference_steps, device=None):
+        # diffusers' DPM++ does np.array(self.alphas_cumprod) inside set_timesteps,
+        # which fails on GPU tensors. Keep its internal alphas_cumprod on CPU.
+        self._scheduler.alphas_cumprod = self._scheduler.alphas_cumprod.cpu()
         self._scheduler.set_timesteps(num_inference_steps=num_inference_steps, device=device)
-        # keep our `timesteps` buffer in sync — the pipeline iterates over it
         self.timesteps = self._scheduler.timesteps.to(device) if device is not None else self._scheduler.timesteps
 
     def step(self, model_output, timestep, sample, generator=None):
@@ -54,5 +56,6 @@ class DPMSolverPPWrapper(nn.Module):
 
     def to(self, device):
         super().to(device)
-        self._scheduler.alphas_cumprod = self._scheduler.alphas_cumprod.to(device)
+        # Intentionally leave _scheduler.alphas_cumprod on CPU — diffusers needs it CPU-side
+        # for set_timesteps's numpy conversion. step() works on GPU sample tensors regardless.
         return self

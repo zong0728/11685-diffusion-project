@@ -102,7 +102,7 @@ def main():
             beta_start=args.beta_start,
             beta_end=args.beta_end,
             beta_schedule=args.beta_schedule,
-            variance_type=args.variance_type,
+            variance_type=getattr(args, 'sampling_variance_type', None) or args.variance_type,
             prediction_type=args.prediction_type,
             clip_sample=args.clip_sample,
             clip_sample_range=args.clip_sample_range,

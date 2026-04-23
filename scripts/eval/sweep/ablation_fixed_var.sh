@@ -16,6 +16,6 @@
 # coefficients are pulling weight at sampling time, or just during training.
 source /projects/bgyq/sguan/11685-diffusion-project/scripts/eval/_common.sh
 run_eval --ckpt /work/nvme/bgyq/sguan/experiments/exp-3-P3_learned_var/checkpoints/ema_epoch_524.pth \
-         --variance_type fixed_small \
+         --variance_type learned_range --sampling_variance_type fixed_small \
          --cfg_guidance_scale 3.0 \
          --run_name sweep_fixed_var 2>&1 | tee eval_results/sweep_fixed_var.txt

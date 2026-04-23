@@ -14,7 +14,7 @@
 # how much EMA contributes to FID. load_checkpoint detects 'unet_state_dict'
 # in checkpoint_epoch_*.pth and loads it directly (no EMA path).
 source /projects/bgyq/sguan/11685-diffusion-project/scripts/eval/_common.sh
-run_eval --ckpt /work/nvme/bgyq/sguan/experiments/exp-3-P3_learned_var/checkpoints/checkpoint_epoch_524.pth \
+run_eval --ckpt /work/nvme/bgyq/sguan/experiments/exp-3-P3_learned_var/checkpoints/checkpoint_epoch_779.pth \
          --variance_type learned_range \
          --cfg_guidance_scale 3.0 \
          --run_name sweep_no_ema 2>&1 | tee eval_results/sweep_no_ema.txt

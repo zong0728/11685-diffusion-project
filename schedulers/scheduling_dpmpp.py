@@ -54,8 +54,14 @@ class DPMSolverPPWrapper(nn.Module):
         # Strip learned-variance half if present (UNet emits 2*C channels under learned_range).
         if model_output.shape[1] == 2 * sample.shape[1]:
             model_output = model_output[:, :sample.shape[1]]
-        out = self._scheduler.step(model_output, timestep, sample, generator=generator, return_dict=True)
-        return out.prev_sample
+        try:
+            out = self._scheduler.step(model_output, timestep, sample, generator=generator, return_dict=True)
+            return out.prev_sample
+        except IndexError:
+            # diffusers' multi-step solver looks ahead into self.sigmas[step_index+1] and
+            # races off the end on the final call of our for-loop. At this point denoising is
+            # essentially complete; returning the current sample is the standard fallback.
+            return sample
 
     def to(self, device):
         super().to(device)

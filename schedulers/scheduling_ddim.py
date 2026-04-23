@@ -12,6 +12,8 @@ from.scheduling_ddpm import DDPMScheduler
 class DDIMScheduler(DDPMScheduler):    
     
     def __init__(self, *args, **kwargs):
+        # Pop our extension before forwarding to DDPMScheduler.
+        self.default_eta = kwargs.pop('default_eta', 0.0)
         super().__init__(*args, **kwargs)
         assert self.num_inference_steps is not None, "Please set `num_inference_steps` before running inference using DDIM."
         self.set_timesteps(self.num_inference_steps)
@@ -48,7 +50,7 @@ class DDIMScheduler(DDPMScheduler):
         timestep: int,
         sample: torch.Tensor,
         generator=None,
-        eta: float=0.0,
+        eta: float=None,
     ) -> torch.Tensor:
         """
         Predict the sample from the previous timestep by reversing the SDE. This function propagates the diffusion
@@ -84,6 +86,10 @@ class DDIMScheduler(DDPMScheduler):
         
         t = timestep
         prev_t = self.previous_timestep(t)
+
+        # Resolve eta: explicit kwarg > scheduler default. Lets the pipeline stay simple.
+        if eta is None:
+            eta = self.default_eta
 
         # Discard learned-variance coefficients — DDIM is deterministic (or has its own sigma via eta).
         model_output, _ = self._split_model_output(model_output, sample.shape[1])

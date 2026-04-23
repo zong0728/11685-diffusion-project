@@ -80,6 +80,8 @@ def parse_args():
     parser.add_argument("--use_dpmpp", type=str2bool, default=False, help="use DPM-Solver++ sampler (overrides use_ddim)")
     parser.add_argument("--dpmpp_solver_order", type=int, default=2, help="DPM-Solver++ order (1/2/3)")
     parser.add_argument("--dpmpp_karras", type=str2bool, default=True, help="use Karras sigmas for DPM-Solver++")
+    parser.add_argument("--ddim_eta", type=float, default=0.0, help="DDIM stochasticity (0=deterministic, 1=DDPM-equivalent)")
+    parser.add_argument("--use_ema_for_inference", type=str2bool, default=True, help="if False, use raw UNet weights instead of EMA for ablation")
 
     # EMA (exponential moving average of weights)
     parser.add_argument("--use_ema", type=str2bool, default=True, help="use EMA of UNet weights for inference")

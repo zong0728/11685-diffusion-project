@@ -54,6 +54,14 @@ class DDPMScheduler(nn.Module):
             alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
             betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
             betas = torch.clamp(betas, 0.0001, 0.999)
+        elif self.beta_schedule == 'sigmoid':
+            # Sigmoid schedule from Chen 2023 "On the Importance of Noise Scheduling".
+            # alphas_bar(t) = sigmoid(-((t/T - 0.5) * 12)). Heavier mass at intermediate t.
+            t = torch.linspace(0, 1, num_train_timesteps + 1, dtype=torch.float32)
+            alphas_cumprod = torch.sigmoid(-((t - 0.5) * 12))
+            alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+            betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+            betas = torch.clamp(betas, 0.0001, 0.999)
         else:
             raise NotImplementedError(f"Beta schedule {self.beta_schedule} not implemented.")
         self.register_buffer("betas", betas)

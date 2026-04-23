@@ -106,6 +106,7 @@ def main():
             prediction_type=args.prediction_type,
             clip_sample=args.clip_sample,
             clip_sample_range=args.clip_sample_range,
+            default_eta=getattr(args, 'ddim_eta', 0.0),
         ).to(device)
     else:
         inference_scheduler = scheduler

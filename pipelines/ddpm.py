@@ -117,7 +117,9 @@ class DDPMPipeline:
             # NOTE: this is for CFG. Under a CFG *schedule*, cfg_now may transit through 1.0 mid-loop;
             # keep the double-branch path the whole time so the UNet call signature is stable
             # (passing c=None breaks learned-variance cross-attention).
-            use_cfg_branch = (cfg_is_schedule and classes is not None) or (
+            use_cfg_branch = (
+                (cfg_is_schedule or guidance_interval is not None) and classes is not None
+            ) or (
                 cfg_now is not None and cfg_now != 1.0
             )
             if use_cfg_branch:

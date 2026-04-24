@@ -105,20 +105,23 @@ class DDPMPipeline:
             else:
                 cfg_now = guidance_scale
 
-            # NOTE: this is for CFG
-            if cfg_now is not None and cfg_now != 1.0:
-                # TODO: implement cfg
+            # NOTE: this is for CFG. Under a CFG *schedule*, cfg_now may transit through 1.0 mid-loop;
+            # keep the double-branch path the whole time so the UNet call signature is stable
+            # (passing c=None breaks learned-variance cross-attention).
+            use_cfg_branch = (cfg_is_schedule and classes is not None) or (
+                cfg_now is not None and cfg_now != 1.0
+            )
+            if use_cfg_branch:
                 model_input = torch.cat([image, image], dim=0)
                 c = torch.cat([uncond_embeds, class_embeds], dim=0)
             else:
                 model_input = image
-                # NOTE: leave c as None if you are not using CFG
                 c = None
 
             # TODO: 1. predict noise model_output
             model_output = self.unet(model_input, t, c)
 
-            if cfg_now is not None and cfg_now != 1.0:
+            if use_cfg_branch:
                 # TODO: implement cfg
                 uncond_model_output, cond_model_output = model_output.chunk(2)
                 # Under learned_range variance the UNet emits 2*C channels. CFG is only applied to

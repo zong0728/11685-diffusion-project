@@ -91,11 +91,22 @@ class DDPMPipeline:
         # TODO: set step values using set_timesteps of scheduler
         self.scheduler.set_timesteps(num_inference_steps, device)
 
+        # CFG schedule: if guidance_scale is a (low, high) tuple/list, linearly interpolate across
+        # timesteps — step 0 uses `low`, last step uses `high`. Matches the Chen 2023 finding that
+        # low CFG at high noise + high CFG at low noise gives a better FID/diversity tradeoff.
+        cfg_is_schedule = isinstance(guidance_scale, (tuple, list))
+        num_steps_total = len(self.scheduler.timesteps)
+
         # TODO: inverse diffusion process with for loop
-        for t in self.progress_bar(self.scheduler.timesteps):
+        for step_idx, t in enumerate(self.progress_bar(self.scheduler.timesteps)):
+            if cfg_is_schedule:
+                frac = step_idx / max(1, num_steps_total - 1)
+                cfg_now = guidance_scale[0] + frac * (guidance_scale[1] - guidance_scale[0])
+            else:
+                cfg_now = guidance_scale
 
             # NOTE: this is for CFG
-            if guidance_scale is not None and guidance_scale != 1.0:
+            if cfg_now is not None and cfg_now != 1.0:
                 # TODO: implement cfg
                 model_input = torch.cat([image, image], dim=0)
                 c = torch.cat([uncond_embeds, class_embeds], dim=0)
@@ -107,7 +118,7 @@ class DDPMPipeline:
             # TODO: 1. predict noise model_output
             model_output = self.unet(model_input, t, c)
 
-            if guidance_scale is not None and guidance_scale != 1.0:
+            if cfg_now is not None and cfg_now != 1.0:
                 # TODO: implement cfg
                 uncond_model_output, cond_model_output = model_output.chunk(2)
                 # Under learned_range variance the UNet emits 2*C channels. CFG is only applied to
@@ -118,10 +129,10 @@ class DDPMPipeline:
                     half = image.shape[1]
                     uncond_eps, _ = uncond_model_output.split(half, dim=1)
                     cond_eps, cond_var = cond_model_output.split(half, dim=1)
-                    eps = uncond_eps + guidance_scale * (cond_eps - uncond_eps)
+                    eps = uncond_eps + cfg_now * (cond_eps - uncond_eps)
                     model_output = torch.cat([eps, cond_var], dim=1)
                 else:
-                    model_output = uncond_model_output + guidance_scale * (cond_model_output - uncond_model_output)
+                    model_output = uncond_model_output + cfg_now * (cond_model_output - uncond_model_output)
 
             # TODO: 2. compute previous image: x_t -> x_t-1 using scheduler
             image = self.scheduler.step(model_output, t, image, generator=generator)

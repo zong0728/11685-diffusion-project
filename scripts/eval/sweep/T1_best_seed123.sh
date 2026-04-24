@@ -1,0 +1,20 @@
+#!/bin/bash
+#SBATCH --job-name=T1_s123
+#SBATCH --account=bgyq-dtai-gh
+#SBATCH --partition=ghx4
+#SBATCH --nodes=1
+#SBATCH --gpus-per-node=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=01:30:00
+#SBATCH --output=logs/T1_s123_%j.out
+#SBATCH --error=logs/T1_s123_%j.err
+
+# Same winner config (ddim100 + cfg2.8 + noclip) with seed=123. If FID noise is ~0.5,
+# picking the best of 3 seeds nets us ~0.3-0.7 lower FID than a single run.
+source /projects/bgyq/sguan/11685-diffusion-project/scripts/eval/_common.sh
+CKPT=$(ls -dt /work/nvme/bgyq/sguan/experiments/exp-*-T1_extend_resume/checkpoints/ema_epoch_1499.pth | head -1)
+run_eval --ckpt "$CKPT" --variance_type learned_range \
+         --num_inference_steps 100 --cfg_guidance_scale 2.8 --clip_sample False \
+         --seed 123 \
+         --run_name sweep_T1_best_seed123 2>&1 | tee eval_results/sweep_T1_best_seed123.txt

@@ -135,11 +135,18 @@ def main():
             logger.info(f"Generating 50 images for class {i}")
             batch_size = 50
             classes = torch.full((batch_size,), i, dtype=torch.long, device=device)
+            # If --cfg_schedule_low/high passed, use CFG schedule; else use constant cfg_guidance_scale.
+            cfg_low = getattr(args, 'cfg_schedule_low', None)
+            cfg_high = getattr(args, 'cfg_schedule_high', None)
+            if cfg_low is not None and cfg_high is not None:
+                guidance = (float(cfg_low), float(cfg_high))
+            else:
+                guidance = args.cfg_guidance_scale
             gen_images = pipeline(
                 batch_size=batch_size,
                 num_inference_steps=args.num_inference_steps,
                 classes=classes,
-                guidance_scale=args.cfg_guidance_scale,
+                guidance_scale=guidance,
                 generator=generator,
                 device=device,
             )

@@ -12,11 +12,63 @@ from.scheduling_ddpm import DDPMScheduler
 class DDIMScheduler(DDPMScheduler):    
     
     def __init__(self, *args, **kwargs):
-        # Pop our extension before forwarding to DDPMScheduler.
+        # Pop our extensions before forwarding to DDPMScheduler.
         self.default_eta = kwargs.pop('default_eta', 0.0)
+        # If True, set_timesteps() picks timesteps from a Karras (rho=7) sigma schedule
+        # instead of uniform timestep spacing — concentrates inference effort in mid-noise.
+        self.use_karras_sigmas = kwargs.pop('use_karras_sigmas', False)
+        self.karras_rho = kwargs.pop('karras_rho', 7.0)
         super().__init__(*args, **kwargs)
         assert self.num_inference_steps is not None, "Please set `num_inference_steps` before running inference using DDIM."
         self.set_timesteps(self.num_inference_steps)
+
+    def set_timesteps(self, num_inference_steps, device=None):
+        if not self.use_karras_sigmas:
+            return super().set_timesteps(num_inference_steps, device=device)
+
+        # Karras sigma schedule (Karras et al. 2022 "Elucidating the Design Space of Diffusion-Based
+        # Generative Models", eq. 5). sigma_t corresponds to noise std at timestep t in our DDPM:
+        #   sigma_t = sqrt((1 - alpha_bar_t) / alpha_bar_t)
+        # We pick N sigmas spaced via the rho-parameterization, then map each back to the closest
+        # training timestep.
+        alphas_cumprod = self.alphas_cumprod.cpu().numpy()
+        sigmas_train = np.sqrt((1 - alphas_cumprod) / alphas_cumprod)
+        sigma_min, sigma_max = float(sigmas_train.min()), float(sigmas_train.max())
+
+        rho = self.karras_rho
+        ramp = np.linspace(0, 1, num_inference_steps)
+        min_inv_rho = sigma_min ** (1 / rho)
+        max_inv_rho = sigma_max ** (1 / rho)
+        sigmas = (max_inv_rho + ramp * (min_inv_rho - max_inv_rho)) ** rho   # large → small
+
+        # Map each sigma back to the training timestep with the closest sigma (nearest-neighbor).
+        timesteps = np.array([int(np.argmin(np.abs(sigmas_train - s))) for s in sigmas])
+        # Deduplicate while preserving descending order (in case two sigmas mapped to the same t).
+        seen = set()
+        dedup = []
+        for t in timesteps:
+            if t not in seen:
+                seen.add(t)
+                dedup.append(t)
+        timesteps = np.array(dedup, dtype=np.int64)
+
+        self.timesteps = torch.from_numpy(timesteps).to(device) if device is not None else torch.from_numpy(timesteps)
+        self.num_inference_steps = len(timesteps)
+        # Cache the descending timestep list for previous_timestep() lookup.
+        self._karras_timestep_list = timesteps.tolist()
+
+    def previous_timestep(self, timestep):
+        if not self.use_karras_sigmas:
+            return super().previous_timestep(timestep)
+        # Find this t in our non-uniform list and return the next one (smaller). If we're at
+        # the final step (smallest t), return -1 so the caller treats alpha_bar_prev as 1.
+        try:
+            idx = self._karras_timestep_list.index(int(timestep))
+        except ValueError:
+            return super().previous_timestep(timestep)
+        if idx + 1 < len(self._karras_timestep_list):
+            return self._karras_timestep_list[idx + 1]
+        return -1
 
     
     def _get_variance(self, t):

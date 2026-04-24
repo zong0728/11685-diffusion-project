@@ -107,6 +107,8 @@ def main():
             clip_sample=args.clip_sample,
             clip_sample_range=args.clip_sample_range,
             default_eta=getattr(args, 'ddim_eta', 0.0),
+            use_karras_sigmas=getattr(args, 'ddim_karras', False),
+            karras_rho=getattr(args, 'ddim_karras_rho', 7.0),
         ).to(device)
     else:
         inference_scheduler = scheduler

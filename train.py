@@ -81,6 +81,8 @@ def parse_args():
     parser.add_argument("--dpmpp_solver_order", type=int, default=2, help="DPM-Solver++ order (1/2/3)")
     parser.add_argument("--dpmpp_karras", type=str2bool, default=True, help="use Karras sigmas for DPM-Solver++")
     parser.add_argument("--ddim_eta", type=float, default=0.0, help="DDIM stochasticity (0=deterministic, 1=DDPM-equivalent)")
+    parser.add_argument("--ddim_karras", type=str2bool, default=False, help="use Karras (rho=7) sigma schedule for DDIM timesteps instead of uniform spacing")
+    parser.add_argument("--ddim_karras_rho", type=float, default=7.0, help="rho for Karras sigma schedule (Karras 2022 uses 7)")
     parser.add_argument("--sampling_variance_type", type=str, default=None, help="override variance_type just at sampling time (keeps UNet arch the same)")
     parser.add_argument("--use_ema_for_inference", type=str2bool, default=True, help="if False, use raw UNet weights instead of EMA for ablation")
 

@@ -48,20 +48,21 @@ class DPMSolverPPWrapper(nn.Module):
         # which fails on GPU tensors. Keep its internal alphas_cumprod on CPU.
         self._scheduler.alphas_cumprod = self._scheduler.alphas_cumprod.cpu()
         self._scheduler.set_timesteps(num_inference_steps=num_inference_steps, device=device)
-        self.timesteps = self._scheduler.timesteps.to(device) if device is not None else self._scheduler.timesteps
+        # diffusers' multi-step solver requires N step() calls for N-step sampling, but looks
+        # ahead sigmas[step_index+1] on the final call, so sigmas has length N+1. If our pipeline
+        # iterates all `timesteps` and also calls step() at the very last one, step_index goes to
+        # N and indexes past the sigmas tensor. The clean fix: expose N-1 timesteps to the pipeline
+        # so it makes N-1 step() calls, and diffusers' internal `lower_order_final=True` + the
+        # final sigma=sigma_min combo still denoises fully across those N-1 calls.
+        base_timesteps = self._scheduler.timesteps
+        self.timesteps = base_timesteps[:-1].to(device) if device is not None else base_timesteps[:-1]
 
     def step(self, model_output, timestep, sample, generator=None):
         # Strip learned-variance half if present (UNet emits 2*C channels under learned_range).
         if model_output.shape[1] == 2 * sample.shape[1]:
             model_output = model_output[:, :sample.shape[1]]
-        try:
-            out = self._scheduler.step(model_output, timestep, sample, generator=generator, return_dict=True)
-            return out.prev_sample
-        except IndexError:
-            # diffusers' multi-step solver looks ahead into self.sigmas[step_index+1] and
-            # races off the end on the final call of our for-loop. At this point denoising is
-            # essentially complete; returning the current sample is the standard fallback.
-            return sample
+        out = self._scheduler.step(model_output, timestep, sample, generator=generator, return_dict=True)
+        return out.prev_sample
 
     def to(self, device):
         super().to(device)

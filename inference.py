@@ -142,11 +142,16 @@ def main():
                 guidance = (float(cfg_low), float(cfg_high))
             else:
                 guidance = args.cfg_guidance_scale
+            # Guidance interval (Kynkäänniemi 2024): apply CFG only during a middle window.
+            gi_start = getattr(args, 'guidance_interval_start', None)
+            gi_end = getattr(args, 'guidance_interval_end', None)
+            gi = (float(gi_start), float(gi_end)) if (gi_start is not None and gi_end is not None) else None
             gen_images = pipeline(
                 batch_size=batch_size,
                 num_inference_steps=args.num_inference_steps,
                 classes=classes,
                 guidance_scale=guidance,
+                guidance_interval=gi,
                 generator=generator,
                 device=device,
             )

@@ -1,0 +1,22 @@
+#!/bin/bash
+#SBATCH --job-name=T1_gi2080
+#SBATCH --account=bgyq-dtai-gh
+#SBATCH --partition=ghx4
+#SBATCH --nodes=1
+#SBATCH --gpus-per-node=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=01:30:00
+#SBATCH --output=logs/T1_gi2080_%j.out
+#SBATCH --error=logs/T1_gi2080_%j.err
+
+# Guidance interval (Kynkäänniemi 2024): apply CFG only during middle 60% of steps.
+# High noise start (0-20%): no guidance → preserves diversity on random init.
+# Middle (20-80%): strong guidance → builds class structure.
+# Low noise end (80-100%): no guidance → final details free to settle without cfg pushing.
+source /projects/bgyq/sguan/11685-diffusion-project/scripts/eval/_common.sh
+CKPT=$(ls -dt /work/nvme/bgyq/sguan/experiments/exp-*-T1_extend_resume/checkpoints/ema_epoch_1499.pth | head -1)
+run_eval --ckpt "$CKPT" --variance_type learned_range \
+         --num_inference_steps 100 --cfg_guidance_scale 3.0 --clip_sample False \
+         --guidance_interval_start 0.2 --guidance_interval_end 0.8 \
+         --run_name sweep_T1_gi_0.2_0.8 2>&1 | tee eval_results/sweep_T1_gi_0.2_0.8.txt

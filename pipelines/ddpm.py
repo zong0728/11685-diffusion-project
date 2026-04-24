@@ -55,11 +55,12 @@ class DDPMPipeline:
     
     @torch.no_grad()
     def __call__(
-        self, 
+        self,
         batch_size: int = 1,
         num_inference_steps: int = 1000,
         classes: Optional[Union[int, List[int]]] = None,
         guidance_scale : Optional[float] = None,
+        guidance_interval: Optional[tuple] = None,   # (start_frac, end_frac), e.g. (0.2, 0.8)
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         device = None,
     ):
@@ -97,6 +98,11 @@ class DDPMPipeline:
         cfg_is_schedule = isinstance(guidance_scale, (tuple, list))
         num_steps_total = len(self.scheduler.timesteps)
 
+        # Guidance interval (Kynkäänniemi 2024): only apply CFG during a middle range of
+        # sampling steps. Outside the interval, cfg_now=1.0 (= no guidance).
+        int_start = int((guidance_interval[0]) * num_steps_total) if guidance_interval else 0
+        int_end = int((guidance_interval[1]) * num_steps_total) if guidance_interval else num_steps_total
+
         # TODO: inverse diffusion process with for loop
         for step_idx, t in enumerate(self.progress_bar(self.scheduler.timesteps)):
             if cfg_is_schedule:
@@ -104,6 +110,9 @@ class DDPMPipeline:
                 cfg_now = guidance_scale[0] + frac * (guidance_scale[1] - guidance_scale[0])
             else:
                 cfg_now = guidance_scale
+            # Apply guidance-interval mask: outside the interval, force cfg_now=1.0
+            if guidance_interval is not None and not (int_start <= step_idx < int_end):
+                cfg_now = 1.0
 
             # NOTE: this is for CFG. Under a CFG *schedule*, cfg_now may transit through 1.0 mid-loop;
             # keep the double-branch path the whole time so the UNet call signature is stable
